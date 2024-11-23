@@ -4,6 +4,8 @@
 
 VANB 是一个基于 GStreamer 的视频/音频流转换工具，支持 NDI 与 RTMP 协议间的双向转换。它允许将 NDI 源推流到 RTMP 服务器，或将 RTMP 流转换为 NDI 输出。
 
+本项目使用 [GPL-3.0](https://www.gnu.org/licenses/gpl-3.0.html) 许可证开源。
+
 ## 支持平台
 
 目前主要支持以下平台：
@@ -25,7 +27,7 @@ brew install --cask --zap gstreamer-development
 
 3. 克隆项目仓库
 ```bash
-git clone https://github.com/Ahua9527/VANB.git
+git clone https://github.com/Ahua9527/VANB.git -b dev
 cd VANB
 ```
 
@@ -83,30 +85,28 @@ python vanb_rx.py
 
 ⚠️ **重要提示：许可与合规性**
 
-### GStreamer 许可
-- GStreamer 核心库和插件采用 LGPL 2.1+ 许可
-- 某些插件可能使用了GPL许可，使用这些插件时需要注意遵守相应的许可要求：
-  - `gst-plugins-base`: LGPL
-  - `gst-plugins-good`: LGPL
-  - `gst-plugins-ugly`: LGPL + GPL
-  - `gst-plugins-bad`: LGPL + GPL
-  - `gst-libav`: GPL
+### 软件许可证
 
-**特别注意**: 本项目使用了以下GPL许可的插件：
-- 来自 gst-plugins-bad:
-  - `faad`: AAC音频解码器 (GPL)
-  - `x265`: HEVC/H.265视频编码器 (GPL)
-- 来自 gst-plugins-ugly:
-  - `x264`: H.264视频编码器 (GPL)
+本项目采用 [GNU General Public License v3.0](https://www.gnu.org/licenses/gpl-3.0.html) 进行许可。
 
-**因此本项目需要遵守GPL许可证的要求。**
+选择 GPL-3.0 许可证的原因：
+1. 本项目使用了多个 GPL 许可的 GStreamer 插件：
+   - `x264`: H.264视频编码器 (GPL)
+   - `x265`: HEVC/H.265视频编码器 (GPL)
+   - `faad`: AAC音频解码器 (GPL)
+2. 根据 GPL 的传染性条款，使用 GPL 组件的软件也必须采用 GPL 许可证
+3. 选择 GPL-3.0 可以确保与所有依赖组件的许可证兼容
 
-**注意**：
-1. 如果您的应用程序使用了GPL插件，那么您的应用程序也需要遵守GPL许可
-2. 建议仔细检查您使用的具体插件的许可证要求
-3. 商业使用时请特别注意GPL插件的使用，建议咨询法律顾问
+### 许可证要求
 
-### NDI 许可
+使用本项目时，您必须遵守以下要求：
+1. **代码开源**: 如果您修改了本项目的代码或将其整合到您的项目中，必须开源您的完整源代码
+2. **保持许可证**: 您的项目必须继续使用 GPL-3.0 许可证
+3. **版权声明**: 您必须保留原始版权声明和许可证声明
+4. **显著注明**: 如果您修改了代码，必须显著注明您所做的改动
+5. **专利授权**: GPL-3.0 包含明确的专利授权条款
+
+### GStreamer 组件许可
 1. 本项目仅用于开发和测试目的
 2. NDI® 是 NewTek, Inc. 的注册商标
 3. 使用本项目需要遵守 NewTek NDI® SDK 许可协议
