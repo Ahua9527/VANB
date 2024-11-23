@@ -27,7 +27,7 @@ brew install --cask --zap gstreamer-development
 
 3. 克隆项目仓库
 ```bash
-git clone https://github.com/Ahua9527/VANB.git -b dev
+git clone https://github.com/Ahua9527/VANB.git
 cd VANB
 ```
 
