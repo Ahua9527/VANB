@@ -1,5 +1,5 @@
 # VANB (Video Audio Network Bridge)
-# VANB (Video Assistant  NDI Bridge)
+# VANB (Video Assistant NDI Bridge)
 # VANB (哇!! NB)
 
 VANB 是一个基于 GStreamer 的视频/音频流转换工具，支持 NDI 与 RTMP 协议间的双向转换。它允许将 NDI 源推流到 RTMP 服务器，或将 RTMP 流转换为 NDI 输出。
@@ -16,7 +16,6 @@ VANB 是一个基于 GStreamer 的视频/音频流转换工具，支持 NDI 与 
 - [NewTek NDI SDK](https://www.ndi.tv/sdk/)
 
 ### 安装步骤
-
 1. 安装 [NewTek NDI SDK](https://www.ndi.tv/sdk/)
 
 2. 通过 Homebrew 安装 GStreamer
@@ -26,7 +25,7 @@ brew install --cask --zap gstreamer-development
 
 3. 克隆项目仓库
 ```bash
-git clone https://github.com/Ahua9527/VANB.git -b dev
+git clone https://github.com/Ahua9527/VANB.git
 cd VANB
 ```
 
@@ -59,17 +58,16 @@ python vanb_rx.py
 ```
 输入 RTMP 拉流地址后，程序会自动创建一个新的 NDI 输出。
 
-
 ## 开发状态
 
 ### 已实现功能
-- ✓  NDI 到 RTMP 的转换
-- ✓  RTMP 到 NDI 的转换
-- ✓  自动帧率和分辨率适配
-- ✓  音视频同步
-- ✓  NDI 源自动扫描
-- ✓  NDI 输出自动命名
-- ✓  VideoToolbox硬件编解码
+- ✓ NDI 到 RTMP 的转换
+- ✓ RTMP 到 NDI 的转换
+- ✓ 自动帧率和分辨率适配
+- ✓ 音视频同步
+- ✓ NDI 源自动扫描
+- ✓ NDI 输出自动命名
+- ✓ VideoToolbox硬件编解码
 
 ### 待实现功能
 - ⨯ 配置文件支持 (Profile/config.json)
@@ -77,9 +75,9 @@ python vanb_rx.py
   - 支持多种转码预设配置
   - 可配置缓冲区大小和延迟参数
   - 支持转码质量和性能平衡配置
-- ⨯  多路流并发处理
-- ⨯  更多的流媒体协议支持
-- ⨯  更多编码格式支持
+- ⨯ 多路流并发处理
+- ⨯ 更多的流媒体协议支持
+- ⨯ 更多编码格式支持
 
 ## 许可声明
 
