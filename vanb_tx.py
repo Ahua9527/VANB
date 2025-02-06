@@ -1,3 +1,4 @@
+# vanb_tx.py
 import gi
 import os
 import logging
@@ -10,8 +11,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # 导入核心模块
-from core.tx_pipeline import TxPipeline, TxPipelineConfig
-from core.scanner import scan_ndi_names
+from core.pipeline_manager import PipelineManager, PipelineMode
 
 def setup_logging() -> logging.Logger:
     """配置日志系统"""
@@ -66,28 +66,34 @@ def get_rtmp_url() -> str:
             print(f"输入错误: {e}")
             print("请重新输入")
 
-def select_ndi_source() -> Optional[str]:
+def select_ndi_source(pipeline_manager: PipelineManager) -> Optional[str]:
     """让用户选择 NDI 源"""
     logger = logging.getLogger(__name__)
     
     # 扫描 NDI 源
-    sources = scan_ndi_names()
+    sources = pipeline_manager.ndi_manager.scan_sources()
     if not sources:
         logger.error("未找到任何 NDI 源")
         return None
         
+    # 过滤出活跃的源
+    active_sources = [s for s in sources if s.is_active]
+    if not active_sources:
+        logger.error("未找到活跃的 NDI 源")
+        return None
+        
     # 显示可用的 NDI 源
     print("\n可用的 NDI 源:")
-    for i, source in enumerate(sources, 1):
-        print(f"{i}. {source}")
+    for i, source in enumerate(active_sources, 1):
+        print(f"{i}. {source.name}")
         
     # 获取用户选择
     while True:
         try:
             choice = input("\n请选择 NDI 源 (输入序号): ").strip()
             index = int(choice) - 1
-            if 0 <= index < len(sources):
-                selected = sources[index]
+            if 0 <= index < len(active_sources):
+                selected = active_sources[index].name
                 logger.info(f"已选择 NDI 源: {selected}")
                 return selected
             print("无效的选择，请重试")
@@ -117,10 +123,13 @@ def main():
         major, minor, micro, nano = Gst.version()
         logger.debug(f"GStreamer 版本: {major}.{minor}.{micro}.{nano}")
         
+        # 创建Pipeline管理器
+        pipeline_manager = PipelineManager()
+        
         while True:
             try:
-                # 获取用户选择的 NDI 源
-                ndi_source = select_ndi_source()
+                # 选择 NDI 源
+                ndi_source = select_ndi_source(pipeline_manager)
                 if not ndi_source:
                     logger.error("未选择 NDI 源")
                     break
@@ -128,15 +137,41 @@ def main():
                 # 获取推流地址
                 rtmp_url = get_rtmp_url()
                 
-                # 创建并运行 Pipeline
-                config = TxPipelineConfig(
+                # 启动发送端Pipeline
+                success = pipeline_manager.start_pipeline(
+                    mode=PipelineMode.TRANSMIT,
+                    rtmp_url=rtmp_url,
                     ndi_source=ndi_source,
-                    rtmp_url=rtmp_url
+                    # 可选：配置编码参数
+                    video_bitrate=2000,  # 2Mbps
+                    audio_bitrate=128000,  # 128kbps
+                    video_format='I420',
+                    audio_rate=44100,
+                    audio_channels=2
                 )
                 
-                pipeline = TxPipeline(config)
-                with pipeline.managed_run() as p:
-                    p.run()
+                if not success:
+                    logger.error("Pipeline启动失败")
+                    retry = input("是否重试? (y/n): ").lower().strip()
+                    if retry != 'y':
+                        break
+                    continue
+                
+                # 等待Pipeline运行完成或出错
+                while pipeline_manager.is_running():
+                    try:
+                        # 每5秒获取一次统计信息
+                        stats = pipeline_manager.get_stats()
+                        logger.debug(
+                            f"Pipeline运行状态:\n"
+                            f"- 运行时间: {stats.running_time:.1f}秒\n"
+                            f"- 丢帧数: {stats.frame_drops}\n"
+                            f"- 当前码率: {stats.current_bitrate:.1f}kbps"
+                        )
+                        time.sleep(5)
+                    except KeyboardInterrupt:
+                        logger.info("收到用户中断信号")
+                        break
                 
                 # 检查是否需要重试
                 retry = input("\n是否重试? (y/n): ").lower().strip()
@@ -144,6 +179,7 @@ def main():
                     break
                 
                 logger.info("准备重新启动...")
+                pipeline_manager.stop_pipeline()
                 time.sleep(2)
                 
             except KeyboardInterrupt:
@@ -154,11 +190,15 @@ def main():
                 retry = input("是否重试? (y/n): ").lower().strip()
                 if retry != 'y':
                     break
+                pipeline_manager.stop_pipeline()
                 time.sleep(2)
                 
     except Exception as e:
         logger.error(f"程序异常退出: {e}")
     finally:
+        # 确保停止Pipeline
+        if 'pipeline_manager' in locals():
+            pipeline_manager.stop_pipeline()
         logger.info("程序结束")
 
 if __name__ == "__main__":

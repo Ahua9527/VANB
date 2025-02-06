@@ -1,17 +1,17 @@
+# vanb_rx.py
 import gi
 import os
 import logging
 import time
 import sys
-from typing import Optional, List
+from typing import Optional
 from dotenv import load_dotenv
 
 # 加载环境变量
 load_dotenv()
 
 # 导入核心模块
-from core.rx_pipeline import RxPipeline, RxPipelineConfig
-from core.scanner import scan_ndi_names
+from core.pipeline_manager import PipelineManager, PipelineMode
 
 def setup_logging() -> logging.Logger:
     """配置日志系统"""
@@ -66,38 +66,6 @@ def get_rtmp_url() -> str:
             print(f"输入错误: {e}")
             print("请重新输入")
 
-def get_sequence_number(ndi_names: List[str]) -> int:
-    """获取新的序列号"""
-    existing_numbers = set()
-    for name in ndi_names:
-        if "VANB-Rx-" in name:
-            try:
-                number = int(name.split("VANB-Rx-")[-1].split(")")[0])
-                if number > 0:
-                    existing_numbers.add(number)
-            except (ValueError, IndexError):
-                continue
-    
-    sequence_number = 1
-    while sequence_number in existing_numbers:
-        sequence_number += 1
-    
-    return sequence_number
-
-def verify_ndi_name(ndi_name: str, ndi_names: List[str]) -> bool:
-    """验证新生成的 NDI 名称是否有效且不重复"""
-    if not ndi_name.startswith("VANB-Rx-"):
-        return False
-    
-    try:
-        number = int(ndi_name.split("-")[-1])
-        if number <= 0:
-            return False
-    except ValueError:
-        return False
-    
-    return not any(ndi_name == existing_name for existing_name in ndi_names)
-
 def main():
     """主程序入口"""
     try:
@@ -119,43 +87,43 @@ def main():
         major, minor, micro, nano = Gst.version()
         logger.debug(f"GStreamer 版本: {major}.{minor}.{micro}.{nano}")
         
-        # 获取 RTMP URL
-        rtmp_url = get_rtmp_url()
+        # 创建Pipeline管理器
+        pipeline_manager = PipelineManager()
         
         while True:
             try:
-                # 扫描当前网络中的 NDI 源
-                ndi_names = scan_ndi_names()
-                if ndi_names is None:
-                    ndi_names = []
-                    logger.warning("NDI 扫描失败，将使用默认序号")
+                # 获取 RTMP URL
+                rtmp_url = get_rtmp_url()
                 
-                # 打印扫描到的 NDI 源
-                if not ndi_names:
-                    logger.debug("未扫描到任何 NDI 源")
-                else:
-                    for name in ndi_names:
-                        logger.info(f"{name}")
-                
-                # 获取新的序列号
-                sequence_number = get_sequence_number(ndi_names)
-                new_ndi_name = f"VANB-Rx-{sequence_number}"
-                
-                # 验证新生成的 NDI 名称
-                if not verify_ndi_name(new_ndi_name, ndi_names):
-                    raise ValueError(f"无法使用 NDI 名称: {new_ndi_name} (已被占用)")
-                
-                logger.info(f"将使用新的 NDI 名称: {new_ndi_name}")
-                
-                # 创建并运行 Pipeline
-                config = RxPipelineConfig(
+                # 启动接收端Pipeline
+                success = pipeline_manager.start_pipeline(
+                    mode=PipelineMode.RECEIVE,
                     rtmp_url=rtmp_url,
-                    ndi_name=new_ndi_name
+                    prefix='VANB-Rx'  # 可选：指定NDI名称前缀
                 )
                 
-                pipeline = RxPipeline(config)
-                with pipeline.managed_run() as p:
-                    p.run()
+                if not success:
+                    logger.error("Pipeline启动失败")
+                    retry = input("是否重试? (y/n): ").lower().strip()
+                    if retry != 'y':
+                        break
+                    continue
+                
+                # 等待Pipeline运行完成或出错
+                while pipeline_manager.is_running():
+                    try:
+                        # 每5秒获取一次统计信息
+                        stats = pipeline_manager.get_stats()
+                        logger.debug(
+                            f"Pipeline运行状态:\n"
+                            f"- 运行时间: {stats.running_time:.1f}秒\n"
+                            f"- 丢帧数: {stats.frame_drops}\n"
+                            f"- 当前码率: {stats.current_bitrate:.1f}kbps"
+                        )
+                        time.sleep(5)
+                    except KeyboardInterrupt:
+                        logger.info("收到用户中断信号")
+                        break
                 
                 # 检查是否需要重试
                 retry = input("\n是否重试? (y/n): ").lower().strip()
@@ -163,6 +131,7 @@ def main():
                     break
                 
                 logger.info("准备重新启动...")
+                pipeline_manager.stop_pipeline()
                 time.sleep(2)
                 
             except KeyboardInterrupt:
@@ -173,11 +142,15 @@ def main():
                 retry = input("是否重试? (y/n): ").lower().strip()
                 if retry != 'y':
                     break
+                pipeline_manager.stop_pipeline()
                 time.sleep(2)
                 
     except Exception as e:
         logger.error(f"程序异常退出: {e}")
     finally:
+        # 确保停止Pipeline
+        if 'pipeline_manager' in locals():
+            pipeline_manager.stop_pipeline()
         logger.info("程序结束")
 
 if __name__ == "__main__":
