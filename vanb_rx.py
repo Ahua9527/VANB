@@ -1,4 +1,6 @@
 # vanb_rx.py
+import subprocess
+from venv import logger
 import gi
 import os
 import logging
@@ -26,35 +28,84 @@ def setup_logging() -> logging.Logger:
     )
     return logging.getLogger(__name__)
 
+# def verify_environment() -> bool:
+#     """验证运行环境"""
+#     required_vars = {
+#         'GST_PLUGIN_PATH': '/Library/NDI SDK for Apple/lib/macOS',
+#         'DYLD_LIBRARY_PATH': '/Library/NDI SDK for Apple/lib/macOS',
+#         'GI_TYPELIB_PATH': '/opt/homebrew/lib/girepository-1.0'
+#     }
+    
+#     missing_vars = []
+#     for var, path in required_vars.items():
+#         current = os.environ.get(var, '')
+#         if not current:
+#             missing_vars.append(var)
+#         elif path not in current:
+#             os.environ[var] = f"{path}:{current}"
+    
+#     if missing_vars:
+#         print("错误: 缺少必要的环境变量:")
+#         for var in missing_vars:
+#             print(f"  - {var}")
+#         return False
+    
+#     return True
+
+def get_homebrew_prefix() -> str:
+    """动态获取Homebrew安装路径"""
+    try:
+        result = subprocess.run(['brew', '--prefix'], 
+                               capture_output=True, 
+                               text=True,
+                               check=True)
+        return result.stdout.strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return '/opt/homebrew'  # M系列芯片默认路径
+
 def verify_environment() -> bool:
-    """验证运行环境"""
-    required_vars = {
-        'GST_PLUGIN_PATH': '/Library/NDI SDK for Apple/lib/macOS',
-        'DYLD_LIBRARY_PATH': '/Library/NDI SDK for Apple/lib/macOS',
-        'GI_TYPELIB_PATH': '/usr/local/lib/girepository-1.0'
+    """改进后的环境验证"""
+    brew_prefix = get_homebrew_prefix()
+    required_paths = {
+        'GST_PLUGIN_PATH': [
+            '/Library/NDI SDK for Apple/lib/macOS',
+            f'{brew_prefix}/lib/gstreamer-1.0'
+        ],
+        'DYLD_LIBRARY_PATH': [
+            '/Library/NDI SDK for Apple/lib/macOS',
+            '/usr/local/lib'
+        ],
+        'GI_TYPELIB_PATH': [
+            f'{brew_prefix}/lib/girepository-1.0',
+            '/usr/local/lib/girepository-1.0'
+        ]
     }
     
-    missing_vars = []
-    for var, path in required_vars.items():
-        current = os.environ.get(var, '')
-        if not current:
-            missing_vars.append(var)
-        elif path not in current:
-            os.environ[var] = f"{path}:{current}"
+    # 验证路径存在性
+    missing_dirs = []
+    for var, paths in required_paths.items():
+        existing_dirs = [p for p in paths if os.path.exists(p)]
+        if not existing_dirs:
+            missing_dirs.append(f"{var}: {', '.join(paths)}")
+            continue
+            
+        current = os.environ.get(var, '').split(':')
+        for d in existing_dirs:
+            if d not in current:
+                current.insert(0, d)
+        os.environ[var] = ':'.join(current)
     
-    if missing_vars:
-        print("错误: 缺少必要的环境变量:")
-        for var in missing_vars:
-            print(f"  - {var}")
+    if missing_dirs:
+        logger.error("关键路径缺失:\n%s", "\n".join(missing_dirs))
         return False
-    
     return True
+
 
 def get_rtmp_url() -> str:
     """获取 RTMP URL 输入"""
     while True:
         try:
-            rtmp_url = input("请输入 RTMP 源 URL: ").strip()
+            rtmp_url = input("请输入 RTMP 播放源 URL: ").strip()
             if not rtmp_url:
                 print("URL 不能为空，请重新输入")
                 continue
@@ -80,7 +131,7 @@ def main():
 
         # 初始化 GStreamer
         gi.require_version('Gst', '1.0')
-        from gi.repository import Gst
+        from gi.repository import Gst, GLib
         Gst.init(None)
         
         # 获取 GStreamer 版本
@@ -90,60 +141,36 @@ def main():
         # 创建Pipeline管理器
         pipeline_manager = PipelineManager()
         
-        while True:
+        try:
+            # 获取 RTMP URL
+            rtmp_url = get_rtmp_url()
+            
+            # 启动接收端Pipeline
+            success = pipeline_manager.start_pipeline(
+                mode=PipelineMode.RECEIVE,
+                rtmp_url=rtmp_url,
+                prefix='VANB-Rx'  # 可选：指定NDI名称前缀
+            )
+            
+            if not success:
+                logger.error("Pipeline启动失败")
+                return
+            
+            # 创建主循环
+            main_loop = GLib.MainLoop()
+            
             try:
-                # 获取 RTMP URL
-                rtmp_url = get_rtmp_url()
-                
-                # 启动接收端Pipeline
-                success = pipeline_manager.start_pipeline(
-                    mode=PipelineMode.RECEIVE,
-                    rtmp_url=rtmp_url,
-                    prefix='VANB-Rx'  # 可选：指定NDI名称前缀
-                )
-                
-                if not success:
-                    logger.error("Pipeline启动失败")
-                    retry = input("是否重试? (y/n): ").lower().strip()
-                    if retry != 'y':
-                        break
-                    continue
-                
-                # 等待Pipeline运行完成或出错
-                while pipeline_manager.is_running():
-                    try:
-                        # 每5秒获取一次统计信息
-                        stats = pipeline_manager.get_stats()
-                        logger.debug(
-                            f"Pipeline运行状态:\n"
-                            f"- 运行时间: {stats.running_time:.1f}秒\n"
-                            f"- 丢帧数: {stats.frame_drops}\n"
-                            f"- 当前码率: {stats.current_bitrate:.1f}kbps"
-                        )
-                        time.sleep(5)
-                    except KeyboardInterrupt:
-                        logger.info("收到用户中断信号")
-                        break
-                
-                # 检查是否需要重试
-                retry = input("\n是否重试? (y/n): ").lower().strip()
-                if retry != 'y':
-                    break
-                
-                logger.info("准备重新启动...")
-                pipeline_manager.stop_pipeline()
-                time.sleep(2)
-                
+                # 启动主循环
+                main_loop.run()
             except KeyboardInterrupt:
                 logger.info("收到用户中断信号")
-                break
-            except Exception as e:
-                logger.error(f"运行出错: {e}")
-                retry = input("是否重试? (y/n): ").lower().strip()
-                if retry != 'y':
-                    break
-                pipeline_manager.stop_pipeline()
-                time.sleep(2)
+            finally:
+                main_loop.quit()
+                
+        except KeyboardInterrupt:
+            logger.info("收到用户中断信号")
+        except Exception as e:
+            logger.error(f"运行出错: {e}")
                 
     except Exception as e:
         logger.error(f"程序异常退出: {e}")

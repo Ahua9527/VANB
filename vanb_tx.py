@@ -31,7 +31,7 @@ def verify_environment() -> bool:
     required_vars = {
         'GST_PLUGIN_PATH': '/Library/NDI SDK for Apple/lib/macOS',
         'DYLD_LIBRARY_PATH': '/Library/NDI SDK for Apple/lib/macOS',
-        'GI_TYPELIB_PATH': '/usr/local/lib/girepository-1.0'
+        'GI_TYPELIB_PATH': '/opt/homebrew/lib/girepository-1.0'
     }
     
     missing_vars = []
@@ -116,7 +116,7 @@ def main():
 
         # 初始化 GStreamer
         gi.require_version('Gst', '1.0')
-        from gi.repository import Gst
+        from gi.repository import Gst, GLib
         Gst.init(None)
         
         # 获取 GStreamer 版本
@@ -126,72 +126,48 @@ def main():
         # 创建Pipeline管理器
         pipeline_manager = PipelineManager()
         
-        while True:
+        try:
+            # 选择 NDI 源
+            ndi_source = select_ndi_source(pipeline_manager)
+            if not ndi_source:
+                logger.error("未选择 NDI 源")
+                return
+            
+            # 获取推流地址
+            rtmp_url = get_rtmp_url()
+            
+            # 启动发送端Pipeline
+            success = pipeline_manager.start_pipeline(
+                mode=PipelineMode.TRANSMIT,
+                rtmp_url=rtmp_url,
+                ndi_source=ndi_source,
+                # 可选：配置编码参数
+                video_bitrate=2000,  # 2Mbps
+                audio_bitrate=128000,  # 128kbps
+                video_format='I420',
+                audio_rate=44100,
+                audio_channels=2
+            )
+            
+            if not success:
+                logger.error("Pipeline启动失败")
+                return
+            
+            # 创建主循环
+            main_loop = GLib.MainLoop()
+            
             try:
-                # 选择 NDI 源
-                ndi_source = select_ndi_source(pipeline_manager)
-                if not ndi_source:
-                    logger.error("未选择 NDI 源")
-                    break
-                
-                # 获取推流地址
-                rtmp_url = get_rtmp_url()
-                
-                # 启动发送端Pipeline
-                success = pipeline_manager.start_pipeline(
-                    mode=PipelineMode.TRANSMIT,
-                    rtmp_url=rtmp_url,
-                    ndi_source=ndi_source,
-                    # 可选：配置编码参数
-                    video_bitrate=2000,  # 2Mbps
-                    audio_bitrate=128000,  # 128kbps
-                    video_format='I420',
-                    audio_rate=44100,
-                    audio_channels=2
-                )
-                
-                if not success:
-                    logger.error("Pipeline启动失败")
-                    retry = input("是否重试? (y/n): ").lower().strip()
-                    if retry != 'y':
-                        break
-                    continue
-                
-                # 等待Pipeline运行完成或出错
-                while pipeline_manager.is_running():
-                    try:
-                        # 每5秒获取一次统计信息
-                        stats = pipeline_manager.get_stats()
-                        logger.debug(
-                            f"Pipeline运行状态:\n"
-                            f"- 运行时间: {stats.running_time:.1f}秒\n"
-                            f"- 丢帧数: {stats.frame_drops}\n"
-                            f"- 当前码率: {stats.current_bitrate:.1f}kbps"
-                        )
-                        time.sleep(5)
-                    except KeyboardInterrupt:
-                        logger.info("收到用户中断信号")
-                        break
-                
-                # 检查是否需要重试
-                retry = input("\n是否重试? (y/n): ").lower().strip()
-                if retry != 'y':
-                    break
-                
-                logger.info("准备重新启动...")
-                pipeline_manager.stop_pipeline()
-                time.sleep(2)
-                
+                # 启动主循环
+                main_loop.run()
             except KeyboardInterrupt:
                 logger.info("收到用户中断信号")
-                break
-            except Exception as e:
-                logger.error(f"运行出错: {e}")
-                retry = input("是否重试? (y/n): ").lower().strip()
-                if retry != 'y':
-                    break
-                pipeline_manager.stop_pipeline()
-                time.sleep(2)
+            finally:
+                main_loop.quit()
+                
+        except KeyboardInterrupt:
+            logger.info("收到用户中断信号")
+        except Exception as e:
+            logger.error(f"运行出错: {e}")
                 
     except Exception as e:
         logger.error(f"程序异常退出: {e}")
