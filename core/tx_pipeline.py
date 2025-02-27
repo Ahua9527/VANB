@@ -1,12 +1,14 @@
+# core/tx_pipeline.py
 from dataclasses import dataclass
 from core.base_pipeline import *
+from core.interfaces import PipelineStats
 
 @dataclass
 class TxPipelineConfig(BasePipelineConfig):
     """发送端 Pipeline 配置类"""
     ndi_source: str                    # NDI 源名称
     rtmp_url: str                      # RTMP 推流地址
-    video_bitrate: int = 2000          # 视频码率 (Kbps)
+    video_bitrate: int = 4000          # 视频码率 (Kbps)
     audio_bitrate: int = 128000        # 音频码率 (bps)
     video_format: str = "I420"         # 视频格式
     audio_rate: int = 44100            # 音频采样率
@@ -16,40 +18,60 @@ class TxPipelineConfig(BasePipelineConfig):
         """获取 Pipeline 描述字符串"""
         return (
             # NDI 源配置
-            # f'ndisrc ndi-name="{self.ndi_source}" ! timestamp-mode=3 ! ndisrcdemux name=demux '
             f'ndisrc '
             f'ndi-name="{self.ndi_source}" '
-            f'timestamp-mode=timecode '     # 使用接收时间作为时间戳
-            f'max-queue-length=20 '             # 增加队列长度
-            f'bandwidth=100 ! '                 # 使用最高带宽
+            f'timestamp-mode=receive-time-vs-timestamp '
+            f'max-queue-length=5 '
+            f'bandwidth=100 ! '
             f'ndisrcdemux name=demux '
 
             # === 视频处理路径 ===
             f'demux.video ! '
-            f'queue max-size-bytes=0 max-size-buffers=0 max-size-time=500000000 ! '
-            f'videoconvert ! '
-            f'videoconvert ! video/x-raw,format={self.video_format} ! '
+            # f'queue '
+            # f'max-size-buffers=200 ' 
+            f'queue leaky=downstream max-size-time=1000000 ! '
+            f'video/x-raw,format=UYVY ! '
+            f'videoconvert n-threads=4 ! '
+            f'video/x-raw,format={self.video_format} ! '
             f'vtenc_h264_hw '
-            f'bitrate={self.video_bitrate} '
             f'allow-frame-reordering=false '
+            f'bitrate={self.video_bitrate} '
+            f'max-keyframe-interval=30 '
+            f'max-keyframe-interval-duration=1000000000 '
+            f'quality=0.5 '
+            # f'rate-control=cbr '
             f'realtime=true ! '
-            f'queue max-size-bytes=0 max-size-buffers=0 leaky=downstream ! '
+            # f'queue '
+            # f'leaky=downstream '
+            f'h264parse config-interval=1 ! '
+            f'queue leaky=downstream max-size-time=1000000 ! '
             f'mux. '
             
             # === 音频处理路径 ===
             f'demux.audio ! '
-            f'queue max-size-bytes=0 max-size-buffers=0 max-size-time=500000000 ! '
-            f'audioconvert ! audioresample ! '
-            f'audio/x-raw,'
-            f'rate={self.audio_rate},'
-            f'channels={self.audio_channels} ! '
-            f'faac bitrate={self.audio_bitrate} ! '
-            f'queue max-size-bytes=0 max-size-buffers=0 leaky=downstream ! '
+            f'queue leaky=downstream max-size-time=1000000 ! '
+            # f'audio/x-raw,format=F32LE,channels=2,rate=48000 ! '
+            f'audioconvert ! '
+            f'audioresample ! '
+            f'audio/x-raw,format=S16LE,channels=2,rate={self.audio_rate} ! '
+            # f'audioconvert ! ' 
+            f'fdkaacenc '
+            f'bitrate={self.audio_bitrate} '
+            f'rate-control=cbr ! '
+            # f'profile=2 ! '
+            f'queue leaky=downstream max-size-buffers=5 max-size-time=1000000 ! '
             f'mux. '
             
             # === 输出配置 ===
-            f'flvmux name=mux latency=500 streamable=true ! '
-            f'rtmpsink location={self.rtmp_url} '
+            f'flvmux name=mux '
+            f'latency=10 '
+            f'streamable=true ! '
+            f'rtmp2sink location={self.rtmp_url} '
+            f'async-connect=true '
+            f'chunk-size=128 '
+            f'stop-commands=fcunpublish '
+            f'stop-commands=deletestream '
+            f'sync=false '
         )
 
 class TxMessageHandler(BaseMessageHandler):
@@ -184,3 +206,35 @@ class TxPipeline(BasePipeline):
             return False
             
         return True
+
+    def get_stats(self) -> PipelineStats:
+        """获取Pipeline统计信息"""
+        stats = PipelineStats()
+        
+        if not self.pipeline:
+            return stats
+            
+        try:
+            # 获取Pipeline状态
+            _, state, _ = self.pipeline.get_state(0)
+            stats.state = state.value_nick.upper()
+            
+            # 获取音视频队列状态
+            for queue_name in ['videoqueue', 'audioqueue']:
+                queue = self.pipeline.get_by_name(queue_name)
+                if queue:
+                    # 获取队列大小和使用情况
+                    cur_level = queue.get_property('current-level-bytes')
+                    max_size = queue.get_property('max-size-bytes')
+                    if max_size > 0:
+                        # 计算使用百分比
+                        usage = (cur_level / max_size) * 100
+                        if queue_name == 'videoqueue':
+                            stats.video_queue_usage = usage
+                        else:
+                            stats.audio_queue_usage = usage
+                            
+        except Exception as e:
+            self.logger.error(f"获取Pipeline统计信息失败: {e}")
+            
+        return stats
